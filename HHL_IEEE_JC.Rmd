@@ -1,0 +1,845 @@
+---
+output: html_document
+title: "HHL IEEE Jeff: Take 2"
+author: Jeff
+date: May 12, 2020
+classoption: fleqn
+header-includes:
+- \setlength{\mathindent}{0pt}
+- \setlength\parindent{0pt}
+---
+
+### Background
+
+Speech Reception Thresholds (in noise) using IEEE sentences. 
+
+Two groups: 
+
+- young adults without much noise exposure history
+- middle-aged adults with quite a bit of noise exposure history
+
+Four conditions (2x2): 
+
+- two stimulus levels (40 and 80 dB SPL)
+- either both the target and background noise were diotic (N~0~S~0~), or the target signal was inverted in polarity in one ear (N~0~S~$\pi$~) leading to a phase disparity across the ears
+
+```{r results = 'hide', echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval=TRUE}
+# Required packages
+Pkgs <- c("tidyverse", "brms", "rstan", 
+          "tidybayes","bayesplot", "modelr", 
+          "parallel", "GGally","here")
+
+# Load packages
+lapply(Pkgs, require, c = T)
+
+## Set computing options
+ncores = detectCores()
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+#source(here("analysis/goHHL.R"))
+```
+
+### The data
+
+uLevs = mean SNR (i.e. SRT) <br />
+sdLevs = standard deviation SNR
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# read in data
+IEEE_Read <- read.csv(here("IEEEsummaries.csv"), 
+                stringsAsFactors = TRUE,  # To cover change in default (FALSE) in R 4.0
+                header = TRUE)
+
+# Create data frame/tibble for analysis
+IEEE_Data <-
+  IEEE_Read %>%
+  mutate(dBSPL = factor(dBSPL), # specify dBSPL as a factor (discrete)
+         Condition = factor(manipulation, 
+                            levels = c("none", "inverted"),
+                            labels = c("None", "Inverted")),
+         Group = fct_rev(factor(paste0(substr(listener,1,1)))))  %>% # create group variable
+  select(Listener = listener, 
+         Group, 
+         dBSPL, 
+         Condition,
+         uLevs, 
+         sdLevs)
+
+head(IEEE_Data)
+```
+
+Check cross tabs for trials by subjects across condition
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#How many trials per subject per condition?
+xtabs(~ Listener + 
+        Group +
+        Condition +
+        dBSPL,
+      data = IEEE_Data) 
+```
+
+Have a look at the data
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# plot SRTs
+Group.labs <- c("Young", "Middle Aged")
+names(Group.labs) <- c("Y", "M")
+
+IEEE_Data %>%
+  ggplot(aes(x = Condition, y = uLevs, colour = dBSPL)) +
+  facet_grid(. ~ Group, 
+             labeller = labeller(group = Group.labs)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(size = 3, alpha = 0.2, position = position_jitterdodge()) +
+  ylim(-14,3) +
+  theme_bw() +
+  scale_fill_manual(values=c("#00CC99","#CC0066")) +
+  labs(x="", y = "SRT (dB)")+
+  scale_x_discrete(labels=c("inverted" = expression("N"[0]*"S"[pi]), "none" = expression("N"[0]*"S"[0]))) + 
+  guides(colour=guide_legend(title="Level (dB SPL)")) + 
+  theme(
+    panel.border = element_rect(fill = NA, colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    strip.text.x = element_text(size = 12),
+    strip.background = element_blank(),
+    legend.position = c(0.87, 0.2),
+    legend.background = element_rect(fill = "transparent")
+  )
+```
+
+### Bayesian analysis
+
+We'll build three models with increasing complexity and then compare model fits using a "leave one out" (loo) cross-validation approach
+
+#### Model 1: Intercept-only model
+
+Specify the model as follows: 
+
+$\begin{aligned}
+SRT &\sim \mathbf{N}(\mu, \sigma) \\
+\mu &= \alpha_{Listener} \\
+\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha}) \\
+\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
+\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
+\sigma &\sim \mathbf{cauchy}(0,1) \\
+\end{aligned}$
+
+```{r, eval = FALSE, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# specify varying intercept & manipulation effect model
+SRT_int_only_fmla <- bf(
+  uLevs ~ (1 | Listener))
+
+## Get priors from BRMS
+SRT_int_only_prior_list <-
+  get_prior(SRT_int_only_fmla,
+            IEEE_Data,
+            family = "gaussian")
+
+# specify priors
+int_only_priors <- c(
+  set_prior("normal(-5,1.5)",  
+            class = "Intercept"),
+  set_prior("cauchy(0,1)",  
+            class = "sd", 
+            coef = "Intercept", 
+            group = "Listener"),
+  set_prior("normal(0,10)", 
+            class = "sigma")
+)
+
+# compile and run model
+SRT_Int_Only_Mod <- brm(
+  SRT_int_only_fmla,
+  IEEE_Data,
+  family = "gaussian",
+  prior = int_only_priors,
+  inits = 0,
+  iter = 2000,
+  warmup = 1000,
+  chains = 2,
+  cores = ncores,
+  sample_prior = TRUE,
+  seed = 42,
+  control = list(max_treedepth = 12,
+                 adapt_delta = 0.9)
+)
+
+```
+
+```{r, echo = FALSE, eval = FALSE}
+## Save model
+save(SRT_int_only_Mod, file = here("SRT_Int_Only_Mod.RDATA"))
+```
+
+```{r, echo = FALSE, eval = TRUE}
+load(here("SRT_Int_Only_Mod.RDATA"))
+summary(SRT_Int_Only_Mod)
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+## Plot loo of intercept only model
+pp_check(SRT_Int_Only_Mod, 
+         type = "loo_pit_overlay")
+```
+
+#### Model 2: Add in predictors:
+
+* Manipulation: the effect of inverting the polarity of the speech across the ears. The difference between the two conditions (inverted and not inverted) is the binaural intelligibility level difference (BILD)
+* dBSPL: the stimulus level (40 or 80 dB SPL)
+* Group: young or middle-aged
+
+Create an index variable for the 'manipulation' variable, where 'none' (i.e. not inverted) = 1, and 'inverted' = 2.  
+
+We will need to come up with a better estimate for the prior, based on the literature, but for now I'll just assume an effect of 'manipulation' (i.e. BILD) of 3 dB with a standard deviation of 1 dB. Since 1 = none, and inverted = 2, I will use a negative mean, because SRTs are expected to decrease (i.e. improve) when the polarity of the speech is inverted in one ear. 
+
+I enter manipulation, Group, and dBSPL as factors, which will automatically be dummuy coded by brms.
+
+Specify the model as follows: 
+
+$\begin{aligned}
+SRT_i &\sim \mathbf{N}(\mu, \sigma) \\
+\mu_i &= \alpha_{Listener_i} + \beta_{M_i} * manipulation_i + \beta_{dBSPL_i} * dBSPL_i + \beta_{G_i} * Group_i \\
+\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha}) \\
+\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
+\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
+\beta_{M} &\sim \mathbf{N}(-3, 1) \\
+\beta_{dBSPL} &\sim N(-3, 1) \\
+\beta_{G} &\sim \mathbf{N}(1, 1) \\
+\sigma &\sim \mathbf{cauchy}(0,1) \\
+\end{aligned}$
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = FALSE}
+# specify varying intercept & manipulation effect model
+SRT_Int_fmla <- bf(
+  uLevs ~ Condition + 
+    Group +
+    dBSPL +
+    (1 | Listener))
+
+## Get priors from BRMS
+SRT_Int_prior_list <-
+  get_prior(SRT_Int_fmla,
+            IEEE_Data,
+            family = "gaussian")
+
+# specify priors
+int_priors <- c(
+  set_prior("normal(-5,1.5)",  
+            class = "Intercept"),
+  set_prior("normal(-3,1)", 
+            class = "b", 
+            coef = "ConditionInverted"),
+  set_prior("normal(-3,1)",  
+            class = "b", 
+            coef = "dBSPL80"),
+  set_prior("normal(1,1)",  
+            class = "b", 
+            coef = "GroupM"),
+  set_prior("cauchy(0,1)", 
+            class = "sd"),
+  set_prior("cauchy(0,1)",  
+            class = "sd", 
+            coef = "Intercept", 
+            group = "Listener"),
+  set_prior("normal(0,10)", 
+            class = "sigma")
+)
+
+# compile and run model
+SRT_Int_Mod <- brm(
+  SRT_Int_fmla,
+  IEEE_Data,
+  family = "gaussian",
+  prior = int_priors,
+  inits = 0,
+  iter = 2000,
+  warmup = 1000,
+  chains = 2,
+  cores = ncores,
+  sample_prior = TRUE,
+  seed = 42,
+  control = list(max_treedepth = 12,
+                 adapt_delta = 0.9)
+)
+```
+
+```{r, eval = FALSE}
+save(SRT_Int_Mod, file = here("SRT_Int_Mod.RDATA"))
+```
+
+```{r, echo = FALSE, eval = TRUE}
+load(here("SRT_Int_Mod.RDATA"))
+summary(SRT_Int_Mod)
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+## Plot loo of varyng intercept model
+pp_check(SRT_Int_Mod, 
+         type = "loo_pit_overlay")
+```
+
+#### Model 3: Add a varying slope for dBSPL to estimate differences between stimulus level across participants
+
+Specify the model as follows: 
+
+$\begin{aligned}
+SRT_{i} &\sim \mathbf{N}(\mu, \sigma) \\
+\mu_{i} &= \alpha_{Listener_i} + \beta_{M_i} * manipulation_i + \beta_{dBSPL_i} * dBSPL_i + \beta_{G_i} * Group_i \\
+\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha} \\
+\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
+\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
+\beta_{M} &\sim \mathbf{N}(-3, 1) \\
+\beta_{dBSPL} &\sim \mathbf{N}(-3, 1) \\
+\beta_{G} &\sim \mathbf{N}(1, 1) \\
+\sigma &\sim \mathbf{cauchy}(0,1) \\
+\left[\begin{array}
+{r}
+\alpha_{Listener}  \\
+\beta_{Listener}
+\end{array}\right] &\sim
+\mathbf{MVNormal}\left( \left[\begin{array}
+{r}
+\alpha  \\
+\beta
+\end{array}\right], \mathbf{S} \right) \\
+\mathbf{S} &= \left[\begin{array}
+{rr}
+\sigma_{\alpha}^{2} & 0  \\
+0 & \sigma_{\beta}^{2}
+\end{array}\right] 
+\mathbf{R} \left[\begin{array}
+{rr}
+\sigma_{\alpha}^{2} & 0  \\
+0 & \sigma_{\beta}^{2}
+\end{array}\right] \\
+\mathbf{R} &\sim~ lkj(1) 
+\end{aligned}$
+
+```{r, eval = FALSE}
+# specify varying intercept,slope, & manipulation effect model
+SRT_Int_Slope_fmla <- bf(
+  uLevs ~ Condition + 
+    Group +
+    dBSPL +
+    (dBSPL | Listener))
+
+## Get priors from BRMS
+SRT_Int_Slope_prior_list <-
+  get_prior(SRT_Int_Slope_fmla,
+            IEEE_Data,
+            family = "gaussian")
+
+# specify priors
+int_slope_priors <- c(
+  set_prior("normal(-5,1.5)",  
+            class = "Intercept"),
+  set_prior("normal(-3,1)", 
+            class = "b", 
+            coef = "ConditionInverted"),
+  set_prior("normal(-3,1)",  
+            class = "b", 
+            coef = "dBSPL80"),
+  set_prior("normal(1,1)",  
+            class = "b", 
+            coef = "GroupM"),
+  set_prior("cauchy(0,1)", 
+            class = "sd"),
+  set_prior("cauchy(0,1)",  
+            class = "sd", 
+            coef = "Intercept", 
+            group = "Listener"),
+  set_prior("cauchy(0,1)",  
+            class = "sd", 
+            coef = "dBSPL80", 
+            group = "Listener"),
+  set_prior("normal(0,10)", 
+            class = "sigma"),
+  set_prior("lkj(1)", 
+            class = "cor")
+)
+
+# compile and run model
+SRT_Int_Slope_Mod <- brm(
+  SRT_Int_Slope_fmla,
+  IEEE_Data,
+  family = "gaussian",
+  prior = int_slope_priors,
+  inits = 0,
+  iter = 2000,
+  warmup = 1000,
+  chains = 2,
+  cores = ncores,
+  sample_prior = TRUE,
+  seed = 42,
+  control = list(max_treedepth = 12,
+                 adapt_delta = 0.9)
+)
+```
+
+```{r, eval = FALSE}
+# Save model
+save(SRT_Int_Slope_Mod, file = here("SRT_Int_Slope_Mod.RDATA"))
+```
+
+```{r, echo = FALSE, eval = TRUE}
+load(here("SRT_Int_Slope_Mod.RDATA"))
+summary(SRT_Int_Slope_Mod)
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+## Plot loo of varying intercept and slope model
+pp_check(SRT_Int_Slope_Mod, 
+         type = "loo_pit_overlay")
+```
+
+#### Model 4: Add interaction terms for manipulation by Group and dBSPL by Group, as well as the varying slopes and intercepts
+
+Specify the model as follows: 
+
+$\begin{aligned}
+SRT_{i} &\sim \mathbf{N}(\mu, \sigma) \\
+\mu_{i} &= \alpha_{Listener_i} + \beta_{M_i} * manipulation_i + \beta_{dBSPL_i} * dBSPL_i + \beta_{G_i} * Group_i + \beta_{MG_i} * manipulation:Group_i + \beta_{dBG_i} * dBSPL:Group_i \\
+\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha} \\
+\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
+\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
+\beta_{M} &\sim \mathbf{N}(-3, 1) \\
+\beta_{dBSPL} &\sim \mathbf{N}(-3, 1) \\
+\beta_{G} &\sim \mathbf{N}(1, 1) \\
+\beta_{MG} &\sim \mathbf{N}(1, 1) \\
+\beta_{dBG} &\sim \mathbf{N}(1, 1) \\
+\sigma &\sim \mathbf{cauchy}(0,1) \\
+\left[\begin{array}
+{r}
+\alpha_{Listener}  \\
+\beta_{Listener}
+\end{array}\right] &\sim
+\mathbf{MVNormal}\left( \left[\begin{array}
+{r}
+\alpha  \\
+\beta
+\end{array}\right], \mathbf{S} \right) \\
+\mathbf{S} &= \left[\begin{array}
+{rr}
+\sigma_{\alpha}^{2} & 0  \\
+0 & \sigma_{\beta}^{2}
+\end{array}\right] 
+\mathbf{R} \left[\begin{array}
+{rr}
+\sigma_{\alpha}^{2} & 0  \\
+0 & \sigma_{\beta}^{2}
+\end{array}\right] \\
+\mathbf{R} &\sim~ lkj(1) 
+\end{aligned}$
+
+```{r, eval = FALSE}
+# specify interaction terms as well as varying intercept,slope, & manipulation effect model
+SRT_Full_fmla <- bf(
+  uLevs ~ Condition + 
+    Group +
+    dBSPL +
+    Condition:Group +
+    dBSPL:Group +
+    (dBSPL | Listener))
+
+## Get priors from BRMS
+SRT_Full_prior_list <-
+  get_prior(SRT_Full_fmla,
+            IEEE_Data,
+            family = "gaussian")
+
+# specify priors
+full_priors <- c(
+  set_prior("normal(-5,1.5)",  
+            class = "Intercept"),
+  set_prior("normal(-3,1)", 
+            class = "b", 
+            coef = "ConditionInverted"),
+  set_prior("normal(-3,1)",  
+            class = "b", 
+            coef = "dBSPL80"),
+  set_prior("normal(1,1)",  
+            class = "b", 
+            coef = "GroupM"),
+  set_prior("normal(0,8)",  # These are pretty wide as guesses
+            class = "b", 
+            coef = "ConditionInverted:GroupM"),
+  set_prior("normal(0,8)",  
+            class = "b", 
+            coef = "GroupM:dBSPL80"),
+  set_prior("cauchy(0,1)", 
+            class = "sd"),
+  set_prior("cauchy(0,1)",  
+            class = "sd", 
+            coef = "Intercept", 
+            group = "Listener"),
+  set_prior("cauchy(0,1)",  
+            class = "sd", 
+            coef = "dBSPL80", 
+            group = "Listener"),
+  set_prior("normal(0,10)", 
+            class = "sigma"),
+  set_prior("lkj(1)", 
+            class = "cor")
+)
+
+# compile and run model
+SRT_Full_Mod <- brm(
+  SRT_Full_fmla,
+  IEEE_Data,
+  family = "gaussian",
+  prior = full_priors,
+  inits = 0,
+  iter = 2000,
+  warmup = 1000,
+  chains = 2,
+  cores = ncores,
+  sample_prior = TRUE,
+  seed = 42,
+  control = list(max_treedepth = 12,
+                 adapt_delta = 0.9)
+)
+```
+
+```{r, eval = FALSE}
+# Save model
+save(SRT_Full_Mod, file = here("SRT_Full_Mod.RDATA"))
+```
+
+```{r, echo = FALSE, eval = TRUE}
+load(here("SRT_Full_Mod.RDATA"))
+summary(SRT_Full_Mod)
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+## Plot loo of final model
+pp_check(SRT_Full_Mod, 
+         type = "loo_pit_overlay")
+```
+
+#### Compare model fits using loo
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+loo(SRT_Int_Only_Mod, 
+    SRT_Int_Mod, 
+    SRT_Int_Slope_Mod,
+    SRT_Full_Mod, 
+    reloo = TRUE)
+
+## Alternate way to present only what we need
+# Add loo criterion for each model
+Int_Only_loo <- add_criterion(SRT_Int_Only_Mod,
+                              criterion = c("loo","bayes_R2"), 
+                              reloo = TRUE)
+Int_loo <- add_criterion(SRT_Int_Mod,
+                         criterion = c("loo","bayes_R2"), 
+                         reloo = TRUE)
+Int_Slope_loo <- add_criterion(SRT_Int_Slope_Mod,
+                               criterion = c("loo","bayes_R2"), 
+                               reloo = TRUE)
+Full_loo <- add_criterion(SRT_Full_Mod,
+                          criterion = c("loo","bayes_R2"), 
+                          reloo = TRUE)
+# Compare models
+loo_compare(Int_Only_loo,
+            Int_loo,
+            Int_Slope_loo,
+            Full_loo)
+
+##Compare models using leave one out (loo) weights
+model_weights(SRT_Int_Only_Mod, 
+               SRT_Int_Mod, 
+               SRT_Int_Slope_Mod,
+               SRT_Full_Mod, 
+              weights = "loo")
+```
+
+It doesn't look like the interactions add much to the fit, so we could go with the more parsimonious solution - varying intercepts and slopes, but no interaction terms
+
+#### Visualizations of "final" model, which has varying intercepts and slopes, but no interaction terms
+
+We can start with a "conventional" dot plot of predicted means and 95% credible intervals:
+
+```{r, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+point_interval(
+  .data = IEEE_Data %>%
+    data_grid(Condition, Group, dBSPL) %>%
+    add_fitted_draws(
+      SRT_Int_Slope_Mod,
+      n = 30,
+      allow_new_levels = TRUE,
+      re_formula = NULL
+    ),
+  .width = 0.89,
+  .point = median,
+  .interval = hdci,
+  .simple_names = TRUE,
+  na.rm = FALSE,
+  .exclude = c(".chain", ".iteration", ".draw", ".row")
+) %>%
+
+ggplot(aes(dBSPL, .value, shape = Condition)) +
+  geom_point(position = position_dodge(width = 0.4), size = 3) +
+  facet_wrap(~ Group) +
+  geom_errorbar(aes(ymin = .lower, ymax = .upper),
+                width = 0.3,
+                position = position_dodge(width = 0.4)) +
+  scale_y_continuous("uLev") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    plot.title = element_text(hjust = 0.5),
+    panel.border = element_rect(fill = NA, colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    strip.text.x = element_text(size = 12),
+    strip.background = element_blank()
+  )
+
+```
+
+Then we can build this out to show the predted means, 95 and 68% credible intervals as well as the distributions of posterior predictions from the model:
+
+```{r, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+## Predictions with distributions
+IEEE_Data %>%
+  data_grid(Condition, Group, dBSPL) %>%
+  add_fitted_draws(
+    SRT_Int_Slope_Mod,
+    n = 100,
+    allow_new_levels = TRUE,
+    re_formula = NULL
+  )  %>%
+  
+  ggplot(aes(dBSPL, .value)) +
+  #geom_point(position = position_dodge(width = 0.4), size = 3) +
+  facet_grid(Condition ~ Group) +
+  stat_eye() +
+  #coord_flip() +
+  scale_y_continuous("dB SNR",) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    plot.title = element_text(hjust = 0.5),
+    panel.border = element_rect(fill = NA, colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    strip.text.x = element_text(size = 12),
+    strip.background = element_blank()
+  )
+```
+
+A a Kruschke-style plot showing both the predictive uncertainty and the parameter uncertainty simultaneously by showing several possible predictive distributions implied by the posterior:
+
+```{r, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+IEEE_Data %>%
+  data_grid(Listener, Condition, Group, dBSPL) %>%
+  add_fitted_draws(SRT_Int_Slope_Mod, dpar = c("mu", "sigma")) %>%
+  sample_draws(30) %>%
+  ggplot(aes(y = Group)) +
+  facet_wrap(~ Condition) +
+  stat_dist_slabh(aes(dist = "norm", arg1 = mu, arg2 = sigma), 
+                  slab_color = "gray65", alpha = 1/10, fill = NA
+  ) +
+  geom_point(aes(x = uLevs), 
+             data = IEEE_Data, 
+             shape = 21, 
+             fill = "#9ECAE1", 
+             size = 2) +
+  scale_x_continuous("uLevs") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    plot.title = element_text(hjust = 0.5),
+    panel.border = element_rect(fill = NA, colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    strip.text.x = element_text(size = 12),
+    strip.background = element_blank()
+  )
+
+```
+
+Return the varibles in the model:
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+get_variables(SRT_Int_Slope_Mod)
+```
+
+We can build out plots of the posterior using tidybayes:
+
+```{r, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+## Posterior intervals with densities
+SRT_Int_Slope_Mod %>%
+  spread_draws(b_Intercept, 
+               b_ConditionInverted,
+               b_GroupM,
+               b_dBSPL80,
+               r_Listener[GroupListener, Term] | Term,
+  ) %>%
+  ungroup() %>%
+  
+  mutate(None_Y_dBSPL40 = b_Intercept + 
+           Intercept,
+         
+         Inverted_Y_dBSPL40 = b_Intercept +
+           b_ConditionInverted +
+           Intercept,
+         
+         None_M_dBSPL40 = b_Intercept +
+           b_GroupM +
+           Intercept,
+         
+         Inverted_M_dBSPL40 = b_Intercept +
+           b_GroupM +
+           b_ConditionInverted +
+           Intercept,
+         
+         None_Y_dBSPL80 = b_Intercept +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80,
+         
+         Inverted_Y_dBSPL80 = b_Intercept +
+           b_ConditionInverted +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80,
+         
+         None_M_dBSPL80 = b_Intercept +
+           b_GroupM +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80,
+         
+         Inverted_M_dBSPL80 = b_Intercept +
+           b_GroupM +
+           b_ConditionInverted +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80 
+  ) %>%
+  select(.chain:.draw, GroupListener, None_Y_dBSPL40:Inverted_M_dBSPL80) %>%
+  pivot_longer(cols = None_Y_dBSPL40:Inverted_M_dBSPL80, 
+               names_to = "Case", 
+               values_to = "Post_Mean") %>%
+  separate(Case, into = c("Condition", "Group2", "Level")) %>%
+  separate(GroupListener, c("Group", "Listener"), sep = 1) %>%
+  filter(Group == Group2) %>% 
+  select(-Group2) %>%
+  mutate(Group = factor(Group, levels = c("Y", "M")), 
+         Listener = factor(Listener),
+         Level = factor(Level, levels = c("dBSPL40", "dBSPL80")),
+         Condition = factor(Condition, levels = c("None", "Inverted")),
+         Post_Odds = exp(Post_Mean),
+         Post_Prob = Post_Odds/(1 + Post_Odds)) %>%
+  select(-Listener) %>%
+  group_by(.chain, .iteration, .draw, Group, Condition, Level) %>%
+  summarize_all(mean) %>%
+  
+  ggplot(aes(y = Level, x = Post_Mean)) +
+  facet_grid(Group ~ Condition) +
+  stat_halfeyeh() +
+  scale_y_discrete("Condition") +
+  scale_x_continuous("Posterior Estimate") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), 
+        plot.title = element_text(hjust = 0.5),
+        panel.border=element_rect(fill=NA,colour="black"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        strip.text.x=element_text(size=12),strip.background = element_blank())
+```
+
+We can also look at densities of differnces between conditions:
+
+```{r, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, eval = TRUE}
+SRT_Int_Slope_Mod %>%
+  spread_draws(b_Intercept, 
+               b_ConditionInverted,
+               b_GroupM,
+               b_dBSPL80,
+               r_Listener[GroupListener, Term] | Term,
+  ) %>%
+  ungroup() %>%
+  
+  mutate(None_Y_dBSPL40 = b_Intercept + 
+           Intercept,
+         
+         Inverted_Y_dBSPL40 = b_Intercept +
+           b_ConditionInverted +
+           Intercept,
+         
+         None_M_dBSPL40 = b_Intercept +
+           b_GroupM +
+           Intercept,
+         
+         Inverted_M_dBSPL40 = b_Intercept +
+           b_GroupM +
+           b_ConditionInverted +
+           Intercept,
+         
+         None_Y_dBSPL80 = b_Intercept +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80,
+         
+         Inverted_Y_dBSPL80 = b_Intercept +
+           b_ConditionInverted +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80,
+         
+         None_M_dBSPL80 = b_Intercept +
+           b_GroupM +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80,
+         
+         Inverted_M_dBSPL80 = b_Intercept +
+           b_GroupM +
+           b_ConditionInverted +
+           b_dBSPL80 +
+           Intercept +
+           dBSPL80 
+  ) %>%
+  select(.chain:.draw, GroupListener, None_Y_dBSPL40:Inverted_M_dBSPL80) %>%
+  pivot_longer(cols = None_Y_dBSPL40:Inverted_M_dBSPL80, 
+               names_to = "Case", 
+               values_to = "Post_Mean") %>%
+  separate(Case, into = c("Condition", "Group2", "Level")) %>%
+  separate(GroupListener, c("Group", "Listener"), sep = 1) %>%
+  filter(Group == Group2) %>% 
+  select(-Group2) %>%
+  mutate(Group = factor(Group, levels = c("Y", "M")), 
+         Listener = factor(Listener),
+         Level = factor(Level, levels = c("dBSPL40", "dBSPL80")),
+         Condition = factor(Condition, levels = c("None", "Inverted")),
+         Post_Odds = exp(Post_Mean),
+         Post_Prob = Post_Odds/(1 + Post_Odds)) %>%
+  select(-Listener) %>%
+  group_by(.chain, .iteration, .draw, Group, Condition, Level) %>%
+  summarize_all(mean) %>%
+  ungroup() %>%
+  group_by(Level, Condition) %>%
+  compare_levels(Post_Mean, 
+                 by = Group) %>% 
+ 
+  ggplot(aes(y = Group, x = Post_Mean)) +
+  facet_grid(Level ~ Condition) +
+  stat_halfeyeh() +
+  scale_x_continuous("Posterior Mean Difference") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), plot.title = element_text(hjust = 0.5),
+        panel.border=element_rect(fill=NA,colour="black"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        strip.text.x=element_text(size=12),strip.background = element_blank())
+```
+
+
