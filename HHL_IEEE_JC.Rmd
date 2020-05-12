@@ -204,11 +204,11 @@ SRT_i &\sim \mathbf{N}(\mu, \sigma) \\
 \mu_i &= \alpha_{Listener_i} + \beta_{M_i} * manipulation_i + \beta_{dBSPL_i} * dBSPL_i + \beta_{G_i} * Group_i \\
 \alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha}) \\
 \overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
-\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
 \beta_{M} &\sim \mathbf{N}(-3, 1) \\
 \beta_{dBSPL} &\sim N(-3, 1) \\
 \beta_{G} &\sim \mathbf{N}(1, 1) \\
 \sigma &\sim \mathbf{cauchy}(0,1) \\
+\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
 \end{aligned}$
 
 ```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, eval = FALSE}
@@ -288,13 +288,6 @@ Specify the model as follows:
 $\begin{aligned}
 SRT_{i} &\sim \mathbf{N}(\mu, \sigma) \\
 \mu_{i} &= \alpha_{Listener_i} + \beta_{M_i} * manipulation_i + \beta_{dBSPL_i} * dBSPL_i + \beta_{G_i} * Group_i \\
-\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha} \\
-\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
-\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
-\beta_{M} &\sim \mathbf{N}(-3, 1) \\
-\beta_{dBSPL} &\sim \mathbf{N}(-3, 1) \\
-\beta_{G} &\sim \mathbf{N}(1, 1) \\
-\sigma &\sim \mathbf{cauchy}(0,1) \\
 \left[\begin{array}
 {r}
 \alpha_{Listener}  \\
@@ -315,6 +308,13 @@ SRT_{i} &\sim \mathbf{N}(\mu, \sigma) \\
 \sigma_{\alpha}^{2} & 0  \\
 0 & \sigma_{\beta}^{2}
 \end{array}\right] \\
+\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha} \\
+\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
+\beta_{M} &\sim \mathbf{N}(-3, 1) \\
+\beta_{dBSPL} &\sim \mathbf{N}(-3, 1) \\
+\beta_{G} &\sim \mathbf{N}(1, 1) \\
+\sigma &\sim \mathbf{cauchy}(0,1) \\
+\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
 \mathbf{R} &\sim~ lkj(1) 
 \end{aligned}$
 
@@ -402,15 +402,6 @@ Specify the model as follows:
 $\begin{aligned}
 SRT_{i} &\sim \mathbf{N}(\mu, \sigma) \\
 \mu_{i} &= \alpha_{Listener_i} + \beta_{M_i} * manipulation_i + \beta_{dBSPL_i} * dBSPL_i + \beta_{G_i} * Group_i + \beta_{MG_i} * manipulation:Group_i + \beta_{dBG_i} * dBSPL:Group_i \\
-\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha} \\
-\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
-\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
-\beta_{M} &\sim \mathbf{N}(-3, 1) \\
-\beta_{dBSPL} &\sim \mathbf{N}(-3, 1) \\
-\beta_{G} &\sim \mathbf{N}(1, 1) \\
-\beta_{MG} &\sim \mathbf{N}(1, 1) \\
-\beta_{dBG} &\sim \mathbf{N}(1, 1) \\
-\sigma &\sim \mathbf{cauchy}(0,1) \\
 \left[\begin{array}
 {r}
 \alpha_{Listener}  \\
@@ -431,6 +422,15 @@ SRT_{i} &\sim \mathbf{N}(\mu, \sigma) \\
 \sigma_{\alpha}^{2} & 0  \\
 0 & \sigma_{\beta}^{2}
 \end{array}\right] \\
+\overline{\alpha} &\sim \mathbf{N}(-5,1.5) \\
+\alpha_{Listener} &\sim \mathbf{N}(\overline{\alpha}, \sigma_{\alpha} \\
+\beta_{M} &\sim \mathbf{N}(-3, 1) \\
+\beta_{dBSPL} &\sim \mathbf{N}(-3, 1) \\
+\beta_{G} &\sim \mathbf{N}(1, 1) \\
+\beta_{MG} &\sim \mathbf{N}(1, 1) \\
+\beta_{dBG} &\sim \mathbf{N}(1, 1) \\
+\sigma &\sim \mathbf{cauchy}(0,1) \\
+\sigma_{\alpha} &\sim \mathbf{cauchy}(0,1) \\
 \mathbf{R} &\sim~ lkj(1) 
 \end{aligned}$
 
